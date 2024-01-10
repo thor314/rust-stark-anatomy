@@ -1,3 +1,4 @@
+//! A translation of G
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(dead_code)]
@@ -6,7 +7,7 @@ use anyhow::Result;
 mod error;
 #[cfg(test)] mod tests;
 
-mod math {
+mod field {
   /// extended Euclidean algorithm for multiplicative inverses
   /// returns (a, b, gcd(x, y)) such that ax + by = gcd(x, y)
   pub fn xgcd<F: Field>(x: F, y: F) -> (F, F, F) {
@@ -78,10 +79,10 @@ mod math {
   }
 }
 
-mod test_field {
+mod my_field {
   use rand::Rng;
 
-  use crate::math::Field;
+  use crate::field::Field;
 
   #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
   pub struct MyField {
@@ -132,7 +133,7 @@ mod test_field {
     fn is_zero(&self) -> bool { self == &Self::ZERO }
 
     fn inverse(rhs: &Self) -> Self {
-      let (x, _, gcd) = crate::math::xgcd(*rhs, Self::ONE);
+      let (x, _, gcd) = crate::field::xgcd(*rhs, Self::ONE);
       assert_eq!(gcd, Self::ONE);
       x
     }
@@ -207,7 +208,7 @@ mod poly {
     ops::*,
   };
 
-  use crate::math::Field;
+  use crate::field::Field;
 
   #[derive(Debug, Clone, PartialEq, Eq)]
   struct Polynomial<F: Field> {
@@ -269,6 +270,39 @@ mod poly {
         }
         val *= val.clone();
         n >>= 1;
+      }
+      acc
+    }
+
+    // exploit horner's method
+    pub fn evaluate(&self, x: F) -> F {
+      let mut acc = F::ZERO;
+      for i in (0..=self.degree()).rev() {
+        acc *= x;
+        acc += self.coeffs[i];
+      }
+      acc
+    }
+
+    pub fn evaluate_domain(&self, domain: &[F]) -> Vec<F> {
+      domain.iter().map(|x| self.evaluate(*x)).collect()
+    }
+
+    pub fn interpolate_domain(domain: &[F], values: &[F]) -> Self {
+      assert_eq!(domain.len(), values.len());
+      let mut acc = Self::new(vec![F::ZERO]);
+      for i in 0..domain.len() {
+        // let mut term = Self::new(vec![F::ONE]);
+        // for j in 0..domain.len() {
+        //   if i == j {
+        //     continue;
+        //   }
+        //   let mut tmp = Self::new(vec![F::ONE, -domain[j]]);
+        //   tmp *= F::inverse(&(domain[i] - domain[j]));
+        //   term *= tmp;
+        // }
+        // term *= values[i];
+        // acc += term;
       }
       acc
     }
