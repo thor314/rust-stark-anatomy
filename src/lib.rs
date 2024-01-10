@@ -1,4 +1,5 @@
-//! A translation of G
+//! A translation of Alan Szepiniac's Anatomy of a Stark blog post
+//! https://aszepieniec.github.io/stark-anatomy/
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 #![allow(dead_code)]
@@ -10,10 +11,10 @@ mod error;
 mod field {
   /// extended Euclidean algorithm for multiplicative inverses
   /// returns (a, b, gcd(x, y)) such that ax + by = gcd(x, y)
-  pub fn xgcd<F: Field>(x: F, y: F) -> (F, F, F) {
+  pub fn xgcd<F: Field>(x: &F, y: &F) -> (F, F, F) {
     let zero = F::ZERO;
     let one = F::ONE;
-    let (mut old_r, mut r) = (x, y);
+    let (mut old_r, mut r) = (x.clone(), y.clone());
     let (mut old_s, mut s) = (one, zero);
     let (mut old_t, mut t) = (zero, one);
     while r != zero {
@@ -53,8 +54,8 @@ mod field {
      {
     const ZERO : Self;
     const ONE : Self;
-    fn inverse(rhs: &Self) -> Self{
-      let (x, _, gcd) = xgcd(*rhs, Self::ONE);
+    fn inverse(&self) -> Self{
+      let (x, _, gcd) = xgcd(self, &Self::ONE);
       assert_eq!(gcd, Self::ONE);
       x
     }
@@ -80,6 +81,8 @@ mod field {
 }
 
 mod my_field {
+  use std::ops::{Deref, DerefMut};
+
   use rand::Rng;
 
   use crate::field::Field;
@@ -132,8 +135,8 @@ mod my_field {
 
     fn is_zero(&self) -> bool { self == &Self::ZERO }
 
-    fn inverse(rhs: &Self) -> Self {
-      let (x, _, gcd) = crate::field::xgcd(*rhs, Self::ONE);
+    fn inverse(&self) -> Self {
+      let (x, _, gcd) = crate::field::xgcd(self, &Self::ONE);
       assert_eq!(gcd, Self::ONE);
       x
     }
@@ -200,6 +203,31 @@ mod my_field {
 
     fn div(self, rhs: Self) -> Self::Output { Self { x: self.x / rhs.x } }
   }
+
+  #[cfg(test)]
+  mod test {
+    use super::*;
+    #[test]
+    fn test_xgcd() {
+      let (a, b, gcd) = crate::field::xgcd(&MyField::new(2), &MyField::new(3));
+      assert_eq!(a, MyField::new(2));
+      assert_eq!(b, MyField::new(1));
+      assert_eq!(gcd, MyField::new(1));
+      let (a, b, gcd) = crate::field::xgcd(&MyField::new(22), &MyField::new(33));
+      assert_eq!(a, MyField::new(11));
+      assert_eq!(b, MyField::new(11));
+      assert_eq!(gcd, MyField::new(11));
+    }
+    #[test]
+    fn test_pow_and_inv() {
+      let felt = MyField::new(2);
+      let feltp = felt.power(3);
+      assert!(feltp == MyField::new(8));
+      let feltp = felt.power(0);
+      assert!(feltp == MyField::new(1));
+      let felti = felt.inverse();
+    }
+  }
 }
 
 mod poly {
@@ -230,6 +258,7 @@ mod poly {
 
     pub fn leading_coefficient(&self) -> F { self.coeffs[self.degree()] }
 
+    /// If `rhs` is zero, returns `None`. Otherwise, returns `(quotient, remainder)`.
     fn div_remainder(self, rhs: Self) -> Option<(Self /* quotient */, Self /* remainder */)> {
       if rhs.is_zero() {
         return None;
@@ -274,7 +303,7 @@ mod poly {
       acc
     }
 
-    // exploit horner's method
+    // exploit horner's method to evaluate the polynomial
     pub fn evaluate(&self, x: F) -> F {
       let mut acc = F::ZERO;
       for i in (0..=self.degree()).rev() {
@@ -284,10 +313,12 @@ mod poly {
       acc
     }
 
+    /// evaluate the polynomial over some domain of points, returning the evaluations
     pub fn evaluate_domain(&self, domain: &[F]) -> Vec<F> {
       domain.iter().map(|x| self.evaluate(*x)).collect()
     }
 
+    ///
     pub fn interpolate_domain(domain: &[F], values: &[F]) -> Self {
       assert_eq!(domain.len(), values.len());
       let mut acc = Self::new(vec![F::ZERO]);
