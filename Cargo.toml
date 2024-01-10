@@ -13,14 +13,14 @@ version    ="0.1.0"
 [dependencies]
 anyhow   ="1.0"
 thiserror="1.0"
-log      ="0.4.14" 
+log      ="0.4.14"
+rand     ={ version="0.8" }
 
 # Common
 # itertools = "0.10.3" # danielkeep.github.io/itercheat_baked.html
 # cfg-if = "1.0.0" # branching compilation logic
 # serde = { version = "1", features = ["derive"] }
 # serde_json = { version = "1.0" }
-# rand = { version = "0.8" }
 # validator = { version = "0.15", features = ["derive"]}
 
 # Occasionally useful convenience macros and APIs

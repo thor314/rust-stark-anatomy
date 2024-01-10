@@ -79,6 +79,8 @@ mod math {
 }
 
 mod test_field {
+  use rand::Rng;
+
   use crate::math::Field;
 
   #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,9 +89,24 @@ mod test_field {
   }
 
   impl MyField {
+    const GENERATOR: u128 = 85408008396924667383611388730472331217u128;
     const MODULUS: u128 = 1 + 407 * (1 << 119);
 
     pub fn new(x: u128) -> Self { Self { x } }
+
+    /// obtain a generator for power-of-two subgroups
+    pub fn primitive_nth_root(n: u128) -> Self {
+      assert!(n.is_power_of_two());
+      let mut root = Self::GENERATOR;
+      let mut order = 1u128 << 119;
+      while order != n {
+        root *= root;
+        order /= 2;
+      }
+      Self::new(root)
+    }
+
+    fn sample(rng: &mut impl Rng) -> Self { Self::new(rng.gen_range(0..Self::MODULUS)) }
   }
 
   impl Field for MyField {
@@ -148,13 +165,19 @@ mod test_field {
   }
 
   impl std::ops::SubAssign for MyField {
-    fn sub_assign(&mut self, rhs: Self) { self.x -= rhs.x; }
+    fn sub_assign(&mut self, rhs: Self) { self.x = self.x - rhs.x; }
   }
 
   impl std::ops::Sub for MyField {
     type Output = Self;
 
-    fn sub(self, rhs: Self) -> Self::Output { Self { x: self.x - rhs.x } }
+    fn sub(self, rhs: Self) -> Self::Output {
+      if self.x < rhs.x {
+        Self { x: Self::MODULUS - (rhs.x - self.x) }
+      } else {
+        Self { x: self.x - rhs.x }
+      }
+    }
   }
 
   impl std::ops::MulAssign for MyField {
@@ -175,5 +198,160 @@ mod test_field {
     type Output = Self;
 
     fn div(self, rhs: Self) -> Self::Output { Self { x: self.x / rhs.x } }
+  }
+}
+
+mod poly {
+  use std::{
+    iter::{once, repeat},
+    ops::*,
+  };
+
+  use crate::math::Field;
+
+  #[derive(Debug, Clone, PartialEq, Eq)]
+  struct Polynomial<F: Field> {
+    coeffs: Vec<F>,
+  }
+
+  impl<F: Field> Polynomial<F> {
+    pub fn new(coeffs: Vec<F>) -> Self { Self { coeffs } }
+
+    pub fn degree(&self) -> usize {
+      if self.is_zero() {
+        0
+      } else {
+        self.coeffs.len() - 1
+      }
+    }
+
+    pub fn is_zero(&self) -> bool { self.coeffs.iter().all(|x| x.is_zero()) }
+
+    pub fn leading_coefficient(&self) -> F { self.coeffs[self.degree()] }
+
+    fn div_remainder(self, rhs: Self) -> Option<(Self /* quotient */, Self /* remainder */)> {
+      if rhs.is_zero() {
+        return None;
+      }
+      if self.degree() < rhs.degree() {
+        return Some((Self::new(vec![]), self));
+      }
+      let rem = Self::new(self.coeffs.clone());
+      let mut quot_coeffs: Vec<F> =
+        repeat(F::ZERO).take(self.degree() - rhs.degree() + 1).collect();
+
+      for i in 0..(self.degree() - rhs.degree() + 1) {
+        if rem.degree() < rhs.degree() {
+          break;
+        }
+        let coefficient = rem.leading_coefficient() / rhs.leading_coefficient();
+        let shift = rem.degree() - rhs.degree();
+        let subtractee =
+          Self::new(repeat(F::ZERO).take(shift).chain(once(coefficient)).collect()) * rhs.clone();
+        quot_coeffs[shift] = coefficient;
+        let remainder = rem.clone() - subtractee;
+      }
+
+      let quot = Self::new(quot_coeffs);
+      Some((quot, rem))
+    }
+
+    pub fn pow(&self, n: usize) -> Self {
+      if n == 0 {
+        return Self::new(vec![F::ONE]);
+      }
+      let mut acc = Self::new(vec![F::ONE]);
+      let mut val = self.clone();
+      let mut n = n;
+      while n > 0 {
+        if n & 1 == 1 {
+          acc *= val.clone();
+        }
+        val *= val.clone();
+        n >>= 1;
+      }
+      acc
+    }
+  }
+
+  impl<F: Field> Add for Polynomial<F> {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+      let mut coeffs = vec![F::ZERO; std::cmp::max(self.coeffs.len(), rhs.coeffs.len())];
+      for i in 0..self.coeffs.len() {
+        coeffs[i] += self.coeffs[i];
+      }
+      for i in 0..rhs.coeffs.len() {
+        coeffs[i] += rhs.coeffs[i];
+      }
+      Self::new(coeffs)
+    }
+  }
+
+  impl<F: Field> Sub for Polynomial<F> {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+      let mut coeffs = vec![F::ZERO; std::cmp::max(self.coeffs.len(), rhs.coeffs.len())];
+      for i in 0..self.coeffs.len() {
+        coeffs[i] += self.coeffs[i];
+      }
+      for i in 0..rhs.coeffs.len() {
+        coeffs[i] -= rhs.coeffs[i];
+      }
+      Self::new(coeffs)
+    }
+  }
+
+  impl<F: Field> Neg for Polynomial<F> {
+    type Output = Self;
+
+    fn neg(self) -> Self::Output {
+      let coeffs = self.coeffs.into_iter().map(|x| -x).collect::<Vec<_>>();
+      Self::new(coeffs)
+    }
+  }
+
+  impl<F: Field> Mul for Polynomial<F> {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+      let mut coeffs = vec![F::ZERO; self.coeffs.len() + rhs.coeffs.len() - 1];
+      for i in 0..self.coeffs.len() {
+        for j in 0..rhs.coeffs.len() {
+          coeffs[i + j] += self.coeffs[i] * rhs.coeffs[j];
+        }
+      }
+      Self::new(coeffs)
+    }
+  }
+
+  impl<F: Field> MulAssign for Polynomial<F> {
+    fn mul_assign(&mut self, rhs: Self) { *self = self.clone() * rhs; }
+  }
+
+  impl<F: Field> AsRef<[F]> for Polynomial<F> {
+    fn as_ref(&self) -> &[F] { &self.coeffs }
+  }
+
+  impl<F: Field> Div for Polynomial<F> {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+      let (q, r) = self.div_remainder(rhs).expect("failed to divide");
+      assert!(r.is_zero(), "non-zero remainder");
+      q
+    }
+  }
+
+  impl<F: Field> Rem for Polynomial<F> {
+    type Output = Self;
+
+    fn rem(self, rhs: Self) -> Self::Output {
+      let (q, r) = self.div_remainder(rhs).expect("failed to divide");
+      assert!(r.is_zero(), "non-zero remainder");
+      r
+    }
   }
 }
