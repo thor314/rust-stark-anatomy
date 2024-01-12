@@ -2,7 +2,7 @@
 # wouldn't use this for much more than 2^20, slow
 # p=65537, g=3, subgroup order=2^16
 # p=7340033, g=3, subgroup order=2^20
-# p=104857601, g=3, subgroup order=2^22
+# p=104857601, g=3, subgroup order=2^22 with multiple 25
 ORDER_SUBGROUP=22
 
 def is_prime(n: int) -> bool:
@@ -20,17 +20,16 @@ def is_prime(n: int) -> bool:
         i += 6
     return True
 
-def gen_field_with_subgroup_order(n: int) -> int:
+def gen_field_with_subgroup_order(n: int) -> tuple[int,int]:
     """obtain a field with a subgroup of order 2**n"""
     n_ = 2**n
     p = n_ + 1
-    # multiple = 1
+    multiple = 1
     while not is_prime(p):
-        # multiple += 1
+        multiple += 1
         p += n_
 
-    # print(multiple)
-    return p
+    return p, multiple
 
 def is_primitive_root(candidate: int, prime: int) -> bool:
     """Check if candidate is a primitive root of prime"""
@@ -52,8 +51,8 @@ def find_generator(prime: int) -> int:
             return candidate
 
 if __name__ == "__main__":
-    p = gen_field_with_subgroup_order(ORDER_SUBGROUP)
+    p, multiple = gen_field_with_subgroup_order(ORDER_SUBGROUP)
     g = find_generator(p)
     assert(g**(2**(ORDER_SUBGROUP-1)) % p != 1)
 
-    print(f"p={p}, g={g}, subgroup order=2^{ORDER_SUBGROUP}")
+    print(f"p={p}, g={g}, subgroup order=2^{ORDER_SUBGROUP} with multiple {multiple}")

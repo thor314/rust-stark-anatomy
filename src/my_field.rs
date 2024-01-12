@@ -1,4 +1,9 @@
-use std::{fmt, ops::*};
+use std::{
+  cmp::{max, min},
+  fmt::{self, Debug},
+  ops::*,
+  u32,
+};
 
 use rand::Rng;
 
@@ -7,49 +12,87 @@ use crate::field::Field;
 /// A field with a large subgroup of power-of-two-order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct MyField {
-  x: u128,
+  x: u32,
 }
 
 impl MyField {
-  pub fn new(x: u128) -> Self { Self { x } }
+  const GENERATOR: u32 = 3;
+  // see generate_field.py on how modulus and generator were chosen.
+  /// chosen to contain a 2^22 order subgroup
+  const MODULUS: u32 = 104857601;
+  const ORDER: u32 = 22;
 
-  /// obtain a generator for power-of-two subgroups.
-  pub fn primitive_nth_root(n: u128) -> Self {
-    assert!(n.is_power_of_two());
-    let mut root = Self::GENERATOR;
-    let mut order = 1u128 << 119;
+  pub fn new(x: u32) -> Self { Self { x } }
 
-    while order != n {
-      root *= root;
-      order /= 2;
+  /// obtain a generator of order 2**n for generating power-of-two subgroups.
+  pub fn primitive_nth_root(n: u32) -> Self {
+    assert!(n <= Self::ORDER);
+    let mut n = n;
+    let mut g: u64 = Self::GENERATOR as u64;
+    let p = Self::MODULUS as u64;
+
+    while n > 0 {
+      g = g * g % p;
+      n -= 1;
     }
 
-    root
+    Self::new(g as u32)
   }
 
   /// obtain a random element of the field
-  fn sample(rng: &mut impl Rng) -> Self { Self::new(rng.gen_range(0..Self::MODULUS.x)) }
+  fn sample(rng: &mut impl Rng) -> Self { Self::new(rng.gen_range(0..Self::MODULUS)) }
+
+  /// extended Euclidean algorithm for multiplicative inverses
+  /// returns (a, b, gcd(x, y)) such that ax + by = gcd(x, y)
+  fn xgcd(x: Self, y: Self) -> (Self, Self, Self) {
+    let (n0, n1) = (Self::ZERO, Self::ONE);
+    let (mut r_, mut r) = (max(x, y), min(x, y));
+    let (mut s_, mut s) = (n0, n0);
+    let (mut t_, mut t) = (n0, n1);
+
+    while r != n0 {
+      let q = MyField::new(r_.x / r.x);
+      (r_, r) = (r, r_ - q * r);
+      (s_, s) = (s, s_ - q * s);
+      (t_, t) = (t, t_ - q * t);
+    }
+
+    // if ax + by = gcd(x, y)
+    // (a, b, gcd(x, y))
+    (s_, t_, r_)
+  }
 }
 
 impl Field for MyField {
-  /// note: unchecked
-  const GENERATOR: Self = Self { x: 85408008396924667383611388730472331217 };
-  /// chosen to contain a 2^119 order subgroup
-  const MODULUS: Self = Self { x: 1 + 407 * (1 << 119) };
   const ONE: Self = Self { x: 1 };
   const ZERO: Self = Self { x: 0 };
+
+  fn inverse(&self) -> Self {
+    let (_a, b, _gcd) = Self::xgcd(Self::MODULUS.into(), *self);
+    b
+  }
+}
+
+impl From<MyField> for u32 {
+  fn from(val: MyField) -> Self { val.x }
 }
 
 impl fmt::Display for MyField {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { write!(f, "{}", self.x) }
 }
 
-impl From<usize> for MyField {
-  fn from(val: usize) -> Self { Self { x: val as u128 } }
+impl From<u32> for MyField {
+  fn from(val: u32) -> Self { Self { x: val } }
 }
 
 impl From<MyField> for Vec<u8> {
   fn from(val: MyField) -> Vec<u8> { val.x.to_be_bytes().to_vec() }
+}
+
+impl Rem<u32> for MyField {
+  type Output = Self;
+
+  fn rem(self, rhs: u32) -> Self::Output { Self { x: self.x % rhs } }
 }
 
 impl Rem for MyField {
@@ -61,13 +104,13 @@ impl Rem for MyField {
 impl Neg for MyField {
   type Output = Self;
 
-  fn neg(self) -> Self::Output { Self { x: (Self::MODULUS.x - self.x) } }
+  fn neg(self) -> Self::Output { Self { x: ((Self::MODULUS - self.x) % Self::MODULUS) } }
 }
 
 impl Add for MyField {
   type Output = Self;
 
-  fn add(self, rhs: Self) -> Self::Output { Self { x: (self.x + rhs.x) % Self::MODULUS.x } }
+  fn add(self, rhs: Self) -> Self::Output { Self { x: (self.x + rhs.x) % Self::MODULUS } }
 }
 
 impl AddAssign for MyField {
@@ -77,7 +120,7 @@ impl AddAssign for MyField {
 impl Sub for MyField {
   type Output = Self;
 
-  fn sub(self, rhs: Self) -> Self::Output { Self::MODULUS + self + (-rhs) }
+  fn sub(self, rhs: Self) -> Self::Output { self + (-rhs) }
 }
 
 impl SubAssign for MyField {
@@ -94,40 +137,75 @@ impl BitXorAssign for MyField {
   fn bitxor_assign(&mut self, rhs: Self) { *self = *self ^ rhs; }
 }
 
-impl std::ops::Mul for MyField {
+impl Mul for MyField {
   type Output = Self;
 
   /// naive double and add, not accelerated or anything
   fn mul(self, rhs: Self) -> Self::Output {
-    let (mut a, mut b) = (self, rhs);
-    let (n0, n1, n2) = (Self::ZERO, Self::ONE, Self::new(2));
-    let mut result = n0;
+    let (mut a, mut b) = (max(self, rhs), min(self, rhs));
+    let mut result = Self::ZERO;
 
-    while b > n0 {
-      if b % n2 == n1 {
+    while b > Self::ZERO {
+      if b & 1 == 1 {
         result += a;
       }
-      a = (n2 * a) % Self::MODULUS;
-      b /= n2;
+      a <<= 1 % Self::MODULUS;
+      b >>= 1;
     }
 
-    result
+    result % Self::MODULUS
   }
+}
+
+impl Shl<u32> for MyField {
+  type Output = Self;
+
+  fn shl(self, rhs: u32) -> Self::Output { Self { x: self.x << rhs } }
+}
+
+impl ShlAssign<u32> for MyField {
+  fn shl_assign(&mut self, rhs: u32) { *self = *self << rhs; }
+}
+
+impl Shr<u32> for MyField {
+  type Output = Self;
+
+  fn shr(self, rhs: u32) -> Self::Output { Self { x: self.x >> rhs } }
+}
+
+impl ShrAssign<u32> for MyField {
+  fn shr_assign(&mut self, rhs: u32) { *self = *self >> rhs; }
+}
+
+impl Mul<u32> for MyField {
+  type Output = Self;
+
+  fn mul(self, rhs: u32) -> Self::Output { self * Self::new(rhs) }
 }
 
 impl MulAssign for MyField {
   fn mul_assign(&mut self, rhs: Self) { *self = *self * rhs }
 }
 
-impl Div for MyField {
+impl Div<MyField> for MyField {
   type Output = Self;
 
   #[allow(clippy::suspicious_arithmetic_impl)]
-  fn div(self, rhs: Self) -> Self::Output { self * rhs.inverse() }
+  fn div(self, rhs: MyField) -> Self::Output { self * rhs.inverse() }
 }
 
 impl DivAssign for MyField {
   fn div_assign(&mut self, rhs: Self) { *self = *self / rhs }
+}
+
+impl DivAssign<u32> for MyField {
+  fn div_assign(&mut self, rhs: u32) { *self /= Self::new(rhs) }
+}
+
+impl BitAnd<u32> for MyField {
+  type Output = u32;
+
+  fn bitand(self, rhs: u32) -> Self::Output { self.x & rhs }
 }
 
 #[cfg(test)]
@@ -136,32 +214,63 @@ mod test {
 
   #[test]
   fn test_xgcd() {
-    let (a, b, gcd) = crate::field::xgcd(MyField::new(2), MyField::new(3));
-    // assert_eq!(a, MyField::new(2));
-    // assert_eq!(b, MyField::new(1));
-    // assert_eq!(gcd, MyField::new(1));
-    // let (a, b, gcd) = crate::field::xgcd(MyField::new(22), MyField::new(33));
-    // assert_eq!(a, MyField::new(11));
-    // assert_eq!(b, MyField::new(11));
-    // assert_eq!(gcd, MyField::new(11));
+    let (a, b, gcd) = MyField::xgcd(MyField::new(123), MyField::new(72));
+    assert_eq!(a, MyField::new(0));
+    assert_eq!(b, MyField::new(12));
+    assert_eq!(gcd, MyField::new(3));
+    let (a, b, gcd) = MyField::xgcd(MyField::new(20), MyField::new(33));
+    assert_eq!(a, MyField::new(0));
+    assert_eq!(b, MyField::new(5));
+    assert_eq!(gcd, MyField::new(1));
   }
 
   #[test]
-  fn test_pow_and_inv() {
+  fn test_pow() {
     let felt = MyField::new(2);
     let feltp = felt.power(3);
     assert!(feltp.x == 8);
     let feltp = felt.power(0);
     assert!(feltp.x == 1);
+  }
+
+  #[test]
+  fn test_inv() {
+    let felt = MyField::new(2);
     let felti = felt.inverse();
-    assert!(felti * felt == MyField::new(1));
+    assert_eq!(felti * felt, MyField::new(1));
   }
 
   #[test]
   fn test_primitive_nth_root() {
-    let root = MyField::primitive_nth_root(1 << 118);
-    assert_eq!(root * MyField::new(2), MyField::ONE);
-    let root = MyField::primitive_nth_root(1 << 119);
-    assert_eq!(root, MyField::ONE);
+    let p = MyField::MODULUS as u128;
+    let root = MyField::primitive_nth_root(MyField::ORDER);
+    let root5 = (root.x as u128).pow(5) % p;
+    let root25 = (root5 * root5 * root5 % p) * root5 * root5 % p;
+    assert_eq!(root25, 1);
+  }
+
+  #[test]
+  fn test_arith() {
+    let a = MyField::new(123);
+    let b = MyField::new(72);
+    assert_eq!(a + b, MyField::new(195));
+    assert_eq!(MyField::new(MyField::MODULUS) + a, a);
+    assert_eq!(MyField::new(MyField::MODULUS) + 0.into(), 0.into());
+    assert_eq!(a - b, MyField::new(51));
+    assert_eq!(a * b, MyField::new(8856));
+    assert_eq!(a % b, MyField::new(51));
+    assert_eq!(-a, (MyField::MODULUS - 123).into());
+    assert_eq!(a ^ b, MyField::new(51));
+    let mut c = a;
+    c += b;
+    assert_eq!(c, MyField::new(195));
+    c -= b;
+    assert_eq!(c, 123.into());
+    c *= b;
+    assert_eq!(c, 8856.into());
+    // let a_inv = a.inverse();
+    // assert_eq!(a * a_inv, 1.into());
+    // c /= b;
+    // assert_eq!(c, MyField::new(123));
   }
 }
