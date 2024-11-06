@@ -12,7 +12,7 @@ version    ="0.1.0"
 # https://rust-lang-nursery.github.io/rust-cookbook/
 [dependencies]
 anyhow   ="1.0"
-thiserror="1.0"
+thiserror="2.0"
 log      ="0.4.14"
 rand     ={ version="0.8" }
 big-int = "7.0.0"
